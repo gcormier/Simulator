@@ -27,6 +27,16 @@ Key structural fact: `sim_loop` does one full loop iteration per simulated tick 
 
 ## Ordered plan (biggest win first)
 
+Status: item #1 done (branch `optimizer`, 9afb4dc). Item #2 done (branch
+`optimizer2`): benchmark 0.90 s → 0.02 s; stepper ISR interval trace verified
+identical to per-tick simulation (32 857 firings, 0 mismatches). Implementing
+#2 exposed and fixed three latent wall-vs-sim-time bugs: input fed before the
+grbl thread's boot flushed the rx stream (now paced by a main-loop heartbeat,
+at most one byte per pass — matching real hardware, where the main loop runs
+many times per serial byte); ^F exit aborting mid-G4-dwell and truncating
+output (exit now requires true quiescence, confirmed across a wall-clock
+pause); eeprom_close() crashing when the grbl thread had not opened the file.
+
 ### 1. Build at -O3 by default (trivial, measured 1.8×; -O2 measured ~20% slower)
 `CMakeLists.txt`: default `CMAKE_BUILD_TYPE` to `Release` when unset (keep it
 overridable). Add `-fno-strict-aliasing` (negligible cost; removes a UB class
