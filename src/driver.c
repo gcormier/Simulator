@@ -25,6 +25,7 @@
 #include "mcu.h"
 #include "driver.h"
 #include "serial.h"
+#include "simulator.h"
 #include "eeprom.h"
 #include "grbl_eeprom_extensions.h"
 #include "platform.h"
@@ -416,6 +417,13 @@ bool driver_setup (settings_t *settings)
 // ensures hardware simulator gets some cycles in "parallel"
 void sim_process_realtime (uint_fast16_t state)
 {
+    // heartbeat for the simulator thread: the boot sequence (which flushes the
+    // input stream) is done and the main loop has run since the last beat.
+    // The serial feed is paced against it so a burst of simulated time cannot
+    // deliver input faster than the grbl thread consumes it - mirroring real
+    // hardware, where the main loop runs many times between two serial bytes.
+    sim.grbl_pulse++;
+
     //platform_sleep(0); // yield needed? or simply trust the OS's thread scheduler...
     on_execute_realtime(state);
 }
@@ -423,6 +431,11 @@ void sim_process_realtime (uint_fast16_t state)
 uint32_t millis (void)
 {
     return ticks;
+}
+
+bool driver_delay_pending (void)
+{
+    return delay.ms != 0;
 }
 
 bool driver_init ()

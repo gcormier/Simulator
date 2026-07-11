@@ -39,6 +39,18 @@ double next_print_time;
 static void print_steps(bool force);
 static void printBlock(void);
 
+//True when the grbl thread has nothing left to do: no queued input, no planned
+//or executing motion, no running delay (G4 dwell) and no response bytes still
+//on their way out. The state check alone misses dwells, which run in STATE_IDLE.
+static bool grbl_is_idle (void)
+{
+    return state_get() < STATE_HOMING &&
+            plan_get_current_block() == NULL &&
+             !driver_delay_pending() &&
+              hal.stream.get_rx_buffer_count() == 0 &&
+               !(uart.tx_irq_enable || uart.tx_flag);
+}
+
 void grbl_app_init (void)
 {
     //setup local tacking vars
@@ -153,9 +165,17 @@ static void print_steps (bool force)
     plan_block_t* current_block = plan_get_current_block();
     int ocr = 0;
 
-    //Allow exit when idle. Prevents aborting before all streamed commands have run
-    if (sim.exit == exit_REQ && state_get() < STATE_HOMING )
-        sim.exit = exit_OK;
+    //Allow exit when idle. Prevents aborting before all streamed commands have run.
+    if (sim.exit == exit_REQ && grbl_is_idle()) {
+        //The grbl thread runs on wall time and may only look idle for a moment,
+        //e.g. between the hal.delay_ms() slices of a G4 dwell or between draining
+        //the input and planning a move. Give it real time to show new activity
+        //before trusting the snapshot; simulated time is no yardstick for this
+        //since it can run far ahead of the grbl thread's progress.
+        platform_sleep(1000);
+        if (grbl_is_idle())
+            sim.exit = exit_OK;
+    }
 
     if (next_print_time == 0.0)
         return;  //no printing

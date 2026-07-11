@@ -30,6 +30,11 @@
 #define MCU_N_TIMERS 3
 #define MCU_N_GPIO 10
 
+// Upper bound for clock ticks skipped in one jump by the event-driven main loop.
+// Bounds how long a change made from the grbl thread (e.g. stepper wake-up) can go
+// unnoticed to 1 ms of simulated time, mirroring the always-on systick period.
+#define MCU_MAX_SKIP (F_CPU / 1000)
+
 typedef enum  {
     Systick_IRQ = 0,
     UART_IRQ,
@@ -120,6 +125,8 @@ void mcu_reset (void);
 void mcu_enable_interrupts (void);
 void mcu_disable_interrupts (void);
 void mcu_master_clock (void);
+uint32_t mcu_ticks_to_event (uint32_t max);
+void mcu_skip_ticks (uint32_t ticks);
 void mcu_register_irq_handler (interrupt_handler handler, irq_num_t irq_num);
 void mcu_gpio_set (gpio_port_t *port, uint16_t pins, uint16_t mask);
 uint8_t mcu_gpio_get (gpio_port_t *port, uint16_t mask);

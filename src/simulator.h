@@ -35,6 +35,7 @@ typedef struct sim_vars {
     uint64_t masterclock;
     double sim_time;  // current time of the simulation, in seconds since start.
     uint8_t started;  // don't start timers until first char recieved.
+    volatile uint32_t grbl_pulse; // grbl thread main-loop heartbeat; 0 until the boot sequence (which flushes the input stream) is done
     enum {exit_NO, exit_REQ, exit_OK} exit;
     float speedup; // current factor how much faster/slower sim time is compared to real time
     int32_t baud_ticks;
