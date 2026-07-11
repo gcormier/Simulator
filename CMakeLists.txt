@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
 project(grblHAL-sim C)
 
+# Default to an optimized build when the user hasn't chosen a build type.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 add_compile_definitions(F_CPU=16000000)
 #add_compile_definitions(SQUARING_ENABLED=1)
 
