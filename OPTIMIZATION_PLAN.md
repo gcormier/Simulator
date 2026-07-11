@@ -37,6 +37,26 @@ many times per serial byte); ^F exit aborting mid-G4-dwell and truncating
 output (exit now requires true quiescence, confirmed across a wall-clock
 pause); eeprom_close() crashing when the grbl thread had not opened the file.
 
+All five items are now consolidated on branch `claude/merge-optimizer-branches-zolgyg`,
+merged one at a time from `optimizer`/`optimizer2`..`optimizer5`:
+- #3 done (branch `optimizer3`): per-tick micro-fixes — lazy `sim_time`,
+  early bail in `print_steps` before `plan_get_current_block()`, and a
+  timer-enabled bitmask + `gpio_irq_pending` flag + direct `isr[]` dispatch in
+  `mcu_master_clock`. Merged with #2's event-skip: the two share the `timer[]`
+  and GPIO state cleanly (all `timer[]` enables now route through
+  `mcu_timer_enable()` so the mask stays a superset of live timers).
+- #4 done (branch `optimizer4`): `sched_yield()` in the grbl realtime hook and
+  the `driver_delay_ms` spin loop; kept alongside #2's `grbl_pulse` heartbeat.
+- #5 done (branch `optimizer5`): one-time raw terminal setup + non-blocking
+  `read()` for stdin/socket serial polling.
+
+Regression across the whole merge: grbl response output and block output stay
+byte-identical to the pre-merge (item #1) build for the plan workload. The
+`-r 0.01` sampled step trace drifts only in the last timestamp digit (<1e-4 s)
+and by at most ±1 step at a sample boundary — a sampling-window artifact of the
+lazy/event-driven timing, not motion divergence: final position and the
+full-resolution ISR step trace are unchanged.
+
 ### 1. Build at -O3 by default (trivial, measured 1.8×; -O2 measured ~20% slower)
 `CMakeLists.txt`: default `CMAKE_BUILD_TYPE` to `Release` when unset (keep it
 overridable). Add `-fno-strict-aliasing` (negligible cost; removes a UB class
