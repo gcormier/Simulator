@@ -71,6 +71,13 @@ void grbl_per_tick (void)
 void grbl_per_byte (void)
 {
     if(sim.socket_fd) {
+        // In socket mode the console keyboard only toggles simulated pins, so
+        // polling it every byte slot (~11.5k conhost round-trips per simulated
+        // second on Windows) is wasted syscalls. Every 128 slots (~11 ms of
+        // sim time at 115200 baud) is far below human reaction time.
+        static uint_fast8_t kbd_divider = 0;
+
+        if((++kbd_divider & 0x7f) == 0)
         switch (platform_poll_stdin()) {
 
             case 'e':
@@ -145,7 +152,13 @@ void grbl_per_byte (void)
                 break;
         }
 
-//        if(args.block_out_file != stdout)
+        // printBlock() runs on the sim thread; in socket mode its default
+        // stdout target is a live console, and a console write that stalls
+        // (Windows QuickEdit text selection blocks writers outright, and
+        // conhost rendering is slow even when healthy) freezes the entire
+        // simulator - serial polling included. Only print when -b redirected
+        // block output to a file.
+        if(args.block_out_file != stdout)
             printBlock();   //maybe print newest block
     } else
         printBlock();   //maybe print newest block

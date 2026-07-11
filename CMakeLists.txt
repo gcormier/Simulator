@@ -41,6 +41,7 @@ if (WIN32)
 
     set(platform_LIB
         ws2_32
+        winmm  # timeBeginPeriod/timeEndPeriod (1 ms Sleep granularity)
     )
 endif(WIN32)
 

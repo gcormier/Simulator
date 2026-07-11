@@ -34,8 +34,10 @@
 #include <sched.h>
 #define sim_yield() sched_yield()
 #else
-// Keep the Windows/mingw build path working; grbl's own behavior is unchanged there.
-#define sim_yield() ((void)0)
+// SwitchToThread() hands the rest of the timeslice to another ready thread
+// (the simulator thread) and returns immediately when none is waiting - the
+// Windows equivalent of sched_yield(). windows.h comes in via platform.h.
+#define sim_yield() SwitchToThread()
 #endif
 
 #include "mcu.h"

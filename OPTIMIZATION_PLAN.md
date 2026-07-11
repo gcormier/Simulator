@@ -143,9 +143,78 @@ and use plain `read()`; keep `select` only for detecting new connections.
 Matters more as items 1–3 raise the achievable speedup ceiling.
 
 ### 6. Smaller / later (measure first)
-- Shrink the 100 ms control frame in `sim_loop` once the tick loop is cheap —
-  lowers worst-case interactive latency/jitter at `-t 1`.
+- ~~Shrink the 100 ms control frame in `sim_loop` once the tick loop is cheap —
+  lowers worst-case interactive latency/jitter at `-t 1`.~~ Done as part of the
+  interactive-latency work below (100 ms → 20 ms).
 - `fflush` per line in `print_steps` only matters with `-r`; leave unless profiled.
+
+## Interactive latency: chunky/unresponsive sender realtime view (2026-07-11, branch `alloptimized`)
+
+Symptom: gSender's realtime view (DRO/visualizer) is chunky or intermittently
+unresponsive when connected to the Windows simulator over `-p <port>`. Root
+cause was three independent, compounding problems — none of them in the tick
+loop the earlier items optimized:
+
+1. **Structural response latency from the 100 ms control frame.** Serial input
+   is only polled during a frame's simulation burst; a `?` arriving while
+   `sim_loop` sleeps out the rest of the frame waits for the next one.
+   Measured `?`→status-report latency at `-t 1` (40 polls at 250 ms cadence,
+   Linux build, loopback): **p50 46 ms, p90 51 ms, max 90 ms**. On Windows,
+   `Sleep()`'s default 15.6 ms granularity added a scheduler quantum of jitter
+   on top.
+2. **Console output blocks the simulator thread.** In socket mode,
+   `printBlock()` still wrote one line per planned block to stdout (with
+   `fflush`) from the sim thread's per-byte hook. On Windows that console is
+   conhost — slow per write, and **completely blocked while the user has a
+   QuickEdit text selection active** (a stray click in the console window
+   freezes the entire simulator: input polling, output draining, everything).
+   `_kbhit()` was also being called once per byte slot (~11.5 k conhost
+   round-trips per simulated second).
+3. **Nagle + delayed ACK on the response socket.** `sim_socket_out` flushed on
+   both `\r` and `\n`, so every `"...\r\n"` line went out as two `send()`s: the
+   body and a lone `\n` byte. With Nagle enabled (no `TCP_NODELAY` anywhere)
+   the trailing byte waits for the peer's ACK, which Windows delays up to
+   ~200 ms — typically until gSender's *next* `?` poll. A line parser that
+   splits on `\n` therefore sees each status report roughly one poll period
+   late, quantizing the realtime view to the poll rate.
+
+Fixes (all landed together):
+- `main.c sim_socket_in` (both platforms): set `TCP_NODELAY` on the accepted socket.
+- `simulator.c sim_socket_out`: flush on `\n` or buffer-full only — one
+  `send()` per line. Verified post-fix: every report arrives as a single
+  segment ending `\r\n`.
+- `simulator.c sim_loop`: control frame 100 ms → 20 ms (worst-case added input
+  latency ≈ frame length; per-frame bookkeeping is cheap since item #2).
+- `platform_windows.c platform_init/terminate`: `timeBeginPeriod(1)` /
+  `timeEndPeriod(1)` so 20 ms frame sleeps are accurate (links `winmm`), and
+  QuickEdit mode disabled on the console (restored on exit) so clicking the
+  window can no longer freeze the sim.
+- `grbl_interface.c grbl_per_byte`: in socket mode, block output is only
+  printed when `-b` redirected it away from stdout (**behavior change**: with
+  `-p` and no `-b`, block lines are no longer printed — pass `-b <file>` to
+  keep them), and the console-key poll (`_kbhit`) is throttled to every 128
+  byte slots (~11 ms sim time).
+- `driver.c`: Windows `sim_yield()` upgraded from no-op to `SwitchToThread()`,
+  matching the Linux `sched_yield()` from item #4.
+
+Measured result (same 40-poll harness, Linux build):
+
+| `?` → report latency | before | after |
+|---|---|---|
+| p50 | 46 ms | 6.8 ms |
+| mean | 45 ms | 7.8 ms |
+| p90 | 51 ms | 9.7 ms |
+| max | 90 ms | 27 ms |
+
+The Windows-only wins (delayed-ACK stalls, QuickEdit freezes, Sleep
+granularity) come on top of this and could not be measured from WSL — verify
+by eye in gSender on the Windows build.
+
+Regression (plan workload, `-t 0`): serial and block output byte-identical
+pre/post; `-r 0.01` step trace shows only the already-documented
+sampling-boundary artifact (last-digit timestamps, ±1 step at sample
+boundaries; final position identical). `-t 1` pacing verified: 5.07 s wall for
+5.07 s of simulated activity.
 
 ## Out of scope but observed
 - `mcu.c mcu_gpio_in`: `changed`/`bitflag` are `uint8_t` while ports are 16-bit —

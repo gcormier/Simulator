@@ -96,13 +96,16 @@ static uint64_t scale_ticks_per_frame (uint64_t ticks, double factor, uint64_t m
 // Runs the hardware simulator at the desired rate until sim.exit is set
 void sim_loop (void)
 {
-    // a sensible control frame length is yet to be found.
-    // the currrent 100ms are a blind guess, assuming some small multiple
-    // of the OS's thread scheduler's time splice makes sense.
-    // smaller means less jitter in the resulting sim time.
-    // too small makes it worse again because of the limited resultion of plattform_sleep(..)
-    // and a simple P controller may be not enough any longer
-    const uint32_t control_frame_ns = 100 * 1000 * 1000; // in real time
+    // Control frame length trades throughput overhead against interactive
+    // latency: serial input is only polled during a frame's simulation burst,
+    // so a byte arriving while we sleep waits for the next frame - the frame
+    // length is the worst-case added response latency at -t 1. With the
+    // event-skipping tick loop a frame's bookkeeping is cheap, so 20 ms (was
+    // 100 ms) costs nothing measurable while cutting mean '?'-to-report
+    // latency from ~45 ms to ~10 ms. Much smaller would run into
+    // platform_sleep() resolution (1 ms on Windows, and only with
+    // timeBeginPeriod(1) - see platform_windows.c).
+    const uint32_t control_frame_ns = 20 * 1000 * 1000; // in real time
 
     // prevent runaway growth of (and undefined conversions to) the tick budget
     // now that event skipping allows huge simulated spans per control frame
@@ -232,8 +235,12 @@ void sim_socket_out (uint8_t data)
     static bool continuation = 0;
 
     buf[len++] = data;
-    // print when we get to newline or run out of buffer
-    if(data == '\n' || data == '\r' || len >= 127) {
+    // Send only on '\n' (grblHAL lines end "\r\n") or when the buffer is full,
+    // so a whole line goes out as ONE send(). Flushing on '\r' too used to
+    // split every line into body+"\r" and a lone "\n" segment; with Nagle the
+    // trailing byte could stall behind the peer's delayed ACK (~200 ms on
+    // Windows), making senders' status updates lag by a poll period.
+    if(data == '\n' || len >= 127) {
 //        if (args.comment_char && !continuation)
 //            fprintf(args.serial_out_file, "%c ", args.comment_char);
 #ifdef WIN32
