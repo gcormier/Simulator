@@ -64,7 +64,11 @@ void simulate_hardware (bool do_serial)
 {
     //do one tick
     sim.masterclock++;
-    sim.sim_time = (float)sim.masterclock / (float)F_CPU;
+    // sim_time is derived lazily from masterclock where it is consumed (see
+    // print_steps in grbl_interface.c). Computing it here every tick was a
+    // needless u64->float convert + divide at 16 M ticks/s. The lazy expression
+    // uses the exact same (float)masterclock/(float)F_CPU rounding, so -r
+    // step-report timestamps stay byte-identical.
 
     mcu_master_clock();
 
@@ -129,7 +133,7 @@ void sim_loop (void)
                 if (skip) {
                     mcu_skip_ticks(skip);
                     sim.masterclock += skip;
-                    sim.sim_time = (float)sim.masterclock / (float)F_CPU;
+                    // sim_time is derived lazily from masterclock in print_steps.
                     if (sim.masterclock == target_ticks)
                         break; // frame budget used up by the jump
                 }

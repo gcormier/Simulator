@@ -159,13 +159,11 @@ void grbl_app_exit (void)
 
 //show current position in steps
 static void print_steps (bool force)
-{ 
+{
     static plan_block_t* printed_block = NULL;
 
-    plan_block_t* current_block = plan_get_current_block();
-    int ocr = 0;
-
-    //Allow exit when idle. Prevents aborting before all streamed commands have run.
+    //Allow exit when idle. Prevents aborting before all streamed commands have run
+    //(kept first - order matters: this must run every tick regardless of -r).
     if (sim.exit == exit_REQ && grbl_is_idle()) {
         //The grbl thread runs on wall time and may only look idle for a moment,
         //e.g. between the hal.delay_ms() slices of a G4 dwell or between draining
@@ -178,16 +176,24 @@ static void print_steps (bool force)
     }
 
     if (next_print_time == 0.0)
-        return;  //no printing
+        return;  //no printing - bail before the (per-tick) plan_get_current_block()
+
+    plan_block_t* current_block = plan_get_current_block();
+    int ocr = 0;
+
+    // Derive sim time lazily from masterclock. This is byte-identical to the value
+    // formerly stored in sim.sim_time: the same (float)masterclock/(float)F_CPU
+    // float division, assigned to a double, so -r timestamps are unchanged.
+    double sim_time = (float)sim.masterclock / (float)F_CPU;
 
     #ifdef VARIABLE_SPINDLE
     if(SPINDLE_TCCRA_REGISTER >= 127) ocr = SPINDLE_OCR_REGISTER;
     #endif
 
     if (current_block != printed_block) {
-        //new block. 
+        //new block.
         if (block_number) //print values from the end of prev block
-            fprintf(args.step_out_file, "%12.5f %d, %d, %d, %d\n", sim.sim_time, sys.position[X_AXIS], sys.position[Y_AXIS], sys.position[Z_AXIS],ocr);
+            fprintf(args.step_out_file, "%12.5f %d, %d, %d, %d\n", sim_time, sys.position[X_AXIS], sys.position[Y_AXIS], sys.position[Z_AXIS],ocr);
 
         printed_block = current_block;
         if (current_block == NULL)
@@ -196,11 +202,11 @@ static void print_steps (bool force)
         fprintf(args.step_out_file, "# block number %d\n", block_number++);
     }
     //print at correct interval while executing block
-    else if ((current_block && sim.sim_time>=next_print_time) || force ) {
-        fprintf(args.step_out_file, "%12.5f %d, %d, %d, %d\n", sim.sim_time, sys.position[X_AXIS], sys.position[Y_AXIS], sys.position[Z_AXIS], ocr);
+    else if ((current_block && sim_time>=next_print_time) || force ) {
+        fprintf(args.step_out_file, "%12.5f %d, %d, %d, %d\n", sim_time, sys.position[X_AXIS], sys.position[Y_AXIS], sys.position[Z_AXIS], ocr);
         fflush(args.step_out_file);
         //make sure the simulation time doesn't get ahead of next_print_time
-        while (next_print_time <= sim.sim_time)
+        while (next_print_time <= sim_time)
             next_print_time += args.step_time;
     }
 }
