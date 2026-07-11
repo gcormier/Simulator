@@ -22,6 +22,22 @@
 #include <string.h>
 #include <stdatomic.h>
 
+// On the host, the grbl thread and the simulator thread share one (or few) real
+// CPU cores. grbl's main loop and driver_delay_ms's spin loop run at full host
+// speed, so without cooperation they starve the simulator thread and burn a
+// whole core (process CPU ~= 2x wall). Yielding the host CPU here does NOT change
+// simulation timing: the simulated tick at which every event fires is driven by
+// the simulator thread's clock/ISRs, not by how often the grbl thread polls.
+// It only lets the scheduler hand cycles to the simulator thread when the grbl
+// thread would otherwise busy-spin.
+#ifndef WIN32
+#include <sched.h>
+#define sim_yield() sched_yield()
+#else
+// Keep the Windows/mingw build path working; grbl's own behavior is unchanged there.
+#define sim_yield() ((void)0)
+#endif
+
 #include "mcu.h"
 #include "driver.h"
 #include "serial.h"
@@ -58,7 +74,8 @@ static void driver_delay_ms (uint32_t ms, void (*callback)(void))
     if((delay.ms = ms) > 0) {
         systick_timer.enable = 1;
         if(!(delay.callback = callback))
-            while(delay.ms);
+            while(delay.ms)
+                sim_yield(); // hand the host CPU to the simulator thread while waiting; delay.ms is decremented by SysTick on the sim thread
     } else if(callback)
         callback();
 }
@@ -416,7 +433,7 @@ bool driver_setup (settings_t *settings)
 // ensures hardware simulator gets some cycles in "parallel"
 void sim_process_realtime (uint_fast16_t state)
 {
-    //platform_sleep(0); // yield needed? or simply trust the OS's thread scheduler...
+    sim_yield(); // yield to the simulator thread instead of spinning grbl's main loop at full host speed
     on_execute_realtime(state);
 }
 
