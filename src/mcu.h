@@ -120,6 +120,7 @@ void mcu_reset (void);
 void mcu_enable_interrupts (void);
 void mcu_disable_interrupts (void);
 void mcu_master_clock (void);
+void mcu_timer_enable (uint_fast8_t timer_id, bool on);
 void mcu_register_irq_handler (interrupt_handler handler, irq_num_t irq_num);
 void mcu_gpio_set (gpio_port_t *port, uint16_t pins, uint16_t mask);
 uint8_t mcu_gpio_get (gpio_port_t *port, uint16_t mask);

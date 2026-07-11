@@ -115,7 +115,7 @@ static void stepperWakeUp (void)
 {
     timer[STEPPER_TIMER].load = 5000;
     timer[STEPPER_TIMER].value = 0;
-    timer[STEPPER_TIMER].enable = 1;
+    mcu_timer_enable(STEPPER_TIMER, true);   // enable + keep timer_enabled_mask in sync
 
 //    hal.stepper_interrupt_callback();   // start the show
 }
@@ -125,7 +125,7 @@ static void stepperGoIdle (bool clear_signals)
 {
     timer[STEPPER_TIMER].value = 0;
     timer[STEPPER_TIMER].load = 0;
-    timer[STEPPER_TIMER].enable = 0;
+    mcu_timer_enable(STEPPER_TIMER, false);  // disable + keep timer_enabled_mask in sync
 
     if(clear_signals) {
         set_step_outputs((axes_signals_t){0});
@@ -138,7 +138,7 @@ static void stepperCyclesPerTick (uint32_t cycles_per_tick)
 {
     timer[STEPPER_TIMER].load = cycles_per_tick;
     timer[STEPPER_TIMER].value = 0;
-    timer[STEPPER_TIMER].enable = 1;
+    mcu_timer_enable(STEPPER_TIMER, true);   // enable + keep timer_enabled_mask in sync
 }
 
 // "Normal" version: Sets stepper direction and pulse pins and starts a step pulse a few nanoseconds later.

@@ -31,6 +31,21 @@ static volatile bool irq_enable = false;
 static volatile bool booted = false;
 static interrupt_handler isr[IRQ_N_HANDLERS];
 
+// Per-idle-tick fast-path gates (see mcu_master_clock):
+//  - timer_enabled_mask: bit i set while timer[i] is enabled. Lets an idle tick
+//    skip the whole timer loop with a single word test. Maintained via
+//    mcu_timer_enable(); on enable the mask bit is set BEFORE timer[].enable and
+//    on disable it is cleared AFTER, so the mask is always a superset of the
+//    enabled timers as observed from the sim thread (x86-TSO store ordering) -
+//    the inner if(timer[i].enable) check is preserved, so a stale extra bit only
+//    costs a harmless loop pass and can never cause a missed or extra IRQ.
+//  - gpio_irq_pending: set whenever mcu_gpio_in raises an irq_state bit; lets an
+//    idle tick skip the 10-port GPIO scan. Cleared before servicing. Each GPIO
+//    handler clears its own trigger (irq_state), so a change fires exactly once,
+//    identical to the previous scan-every-tick behaviour.
+static volatile uint32_t timer_enabled_mask = 0;
+static volatile bool gpio_irq_pending = false;
+
 mcu_uart_t uart;
 mcu_timer_t timer[MCU_N_TIMERS];
 mcu_timer_t systick_timer;
@@ -55,8 +70,26 @@ void mcu_reset (void)
     memset(&systick_timer, 0, sizeof(mcu_timer_t));
     memset(&gpio, 0, sizeof(gpio_port_t) * MCU_N_GPIO);
 
+    // all timers/gpio just zeroed - reset the fast-path caches to match
+    timer_enabled_mask = 0;
+    gpio_irq_pending = false;
+
     irq_enable = true;
     booted = true;
+}
+
+// Enable/disable one of the timer[] timers, keeping timer_enabled_mask in sync.
+// Ordering matters for the sim-thread fast path: set the mask bit before enabling
+// and clear it after disabling so the mask is never missing a bit for a live timer.
+void mcu_timer_enable (uint_fast8_t timer_id, bool on)
+{
+    if(on) {
+        timer_enabled_mask |= (1u << timer_id);
+        timer[timer_id].enable = true;
+    } else {
+        timer[timer_id].enable = false;
+        timer_enabled_mask &= ~(1u << timer_id);
+    }
 }
 
 void mcu_register_irq_handler (interrupt_handler handler, irq_num_t irq_num)
@@ -81,45 +114,45 @@ void mcu_master_clock (void)
     if(!booted)
         return;
 
-    for(i = 0; i < MCU_N_TIMERS; i++) {
+    // Timer loop - skipped entirely when no timer[] timer is enabled. The inner
+    // per-timer logic is unchanged; only the switch() dispatch is replaced with a
+    // direct isr[Timer0_IRQ + i]() call (Timer0/1/2_IRQ are consecutive enums).
+    if(timer_enabled_mask) {
+        for(i = 0; i < MCU_N_TIMERS; i++) {
 
-        if(timer[i].enable) {
+            if(timer[i].enable) {
 
-            if(timer[i].prescaler) {
-                if(timer[i].prescale == 0)
-                    timer[i].prescale = timer[i].prescaler;
-                else {
-                    if(--timer[i].prescale != 0)
-                        continue;
-                    else
+                if(timer[i].prescaler) {
+                    if(timer[i].prescale == 0)
                         timer[i].prescale = timer[i].prescaler;
+                    else {
+                        if(--timer[i].prescale != 0)
+                            continue;
+                        else
+                            timer[i].prescale = timer[i].prescaler;
+                    }
                 }
-            }
 
-            if(timer[i].value == 0)
-                timer[i].value = timer[i].load;
-            else if(--timer[i].value == 0) {
-                if(timer[i].irq_enable && irq_enable) {
-                    switch(i)
-                    {
-                        case 0:
-                            isr[Timer0_IRQ]();
-                            break;
-                        case 1:
-                            isr[Timer1_IRQ]();
-                            break;
-                        case 2:
-                            isr[Timer2_IRQ]();
-                            break;                    }
-                } 
-                timer[i].value = timer[i].load;
+                if(timer[i].value == 0)
+                    timer[i].value = timer[i].load;
+                else if(--timer[i].value == 0) {
+                    if(timer[i].irq_enable && irq_enable)
+                        isr[Timer0_IRQ + i]();
+                    timer[i].value = timer[i].load;
+                }
             }
         }
     }
 
-    for(i = 0; i < MCU_N_GPIO; i++) {
-        if(gpio[i].irq_state.value & gpio[i].irq_mask.value)
-            isr[GPIO0_IRQ + i]();
+    // GPIO pin-change IRQs - skipped unless mcu_gpio_in flagged a pending change.
+    // Cleared before servicing so a change raised while servicing is kept for the
+    // next tick. Handlers clear their own irq_state, so each change fires once.
+    if(gpio_irq_pending) {
+        gpio_irq_pending = false;
+        for(i = 0; i < MCU_N_GPIO; i++) {
+            if(gpio[i].irq_state.value & gpio[i].irq_mask.value)
+                isr[GPIO0_IRQ + i]();
+        }
     }
 
     if(systick_timer.enable) {
@@ -158,11 +191,15 @@ void mcu_gpio_in (gpio_port_t *port, uint16_t pins, uint16_t mask)
     do {
         if(changed & bitflag) {
             if(port->state.value & bitflag) {
-                if(port->falling.value & bitflag)
+                if(port->falling.value & bitflag) {
                     port->irq_state.value |= bitflag;
+                    gpio_irq_pending = true;
+                }
             } else {
-                if(port->rising.value & bitflag)
+                if(port->rising.value & bitflag) {
                     port->irq_state.value |= bitflag;
+                    gpio_irq_pending = true;
+                }
             }
             changed &= ~bitflag;
         }
