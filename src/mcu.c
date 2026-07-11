@@ -28,7 +28,7 @@
 #include "grbl/hal.h"
 
 static volatile bool irq_enable = false;
-static bool booted = false;
+static volatile bool booted = false;
 static interrupt_handler isr[IRQ_N_HANDLERS];
 
 mcu_uart_t uart;

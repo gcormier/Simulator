@@ -20,6 +20,7 @@
 */
 
 #include <string.h>
+#include <stdatomic.h>
 
 #include "mcu.h"
 #include "driver.h"
@@ -34,10 +35,12 @@
 #define SQUARING_ENABLED 0
 #endif
 
+// NOTE: probe_invert, ticks and delay are shared between the grbl thread and the
+// simulator thread's ISRs; they need volatile/_Atomic so stores are visible across threads.
 static spindle_id_t spindle_id;
-static bool probe_invert;
-static uint32_t ticks = 0;
-static delay_t delay = { .ms = 1, .callback = NULL }; // NOTE: initial ms set to 1 for "resetting" systick timer on startup
+static volatile bool probe_invert;
+static _Atomic uint32_t ticks = 0;
+static volatile delay_t delay = { .ms = 1, .callback = NULL }; // NOTE: initial ms set to 1 for "resetting" systick timer on startup
 static on_execute_realtime_ptr on_execute_realtime;
 
 void SysTick_Handler (void);

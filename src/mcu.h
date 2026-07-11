@@ -49,27 +49,29 @@ typedef enum  {
     IRQ_N_HANDLERS
 } irq_num_t;
 
+// NOTE: fields are volatile because peripheral "registers" are accessed both from
+// the simulator thread (mcu_master_clock/ISRs) and the grbl thread (HAL calls).
 typedef struct
 {
     volatile bool enable;
-    bool irq_enable;
-    uint32_t value;
-    uint32_t load;
-    uint32_t prescale;
-    uint32_t prescaler;
-    uint32_t compare;
+    volatile bool irq_enable;
+    volatile uint32_t value;
+    volatile uint32_t load;
+    volatile uint32_t prescale;
+    volatile uint32_t prescaler;
+    volatile uint32_t compare;
 } mcu_timer_t;
 
 typedef struct
 {
-    bool rx_irq;
-    bool tx_irq;
-    bool tx_flag;
-    bool rx_irq_enable;
-    bool tx_irq_enable;
-    uint8_t rx_data;
-    uint8_t tx_data;
-    uint32_t cdiv;
+    volatile bool rx_irq;
+    volatile bool tx_irq;
+    volatile bool tx_flag;
+    volatile bool rx_irq_enable;
+    volatile bool tx_irq_enable;
+    volatile uint8_t rx_data;
+    volatile uint8_t tx_data;
+    volatile uint32_t cdiv;
 } mcu_uart_t;
 
 typedef union {
@@ -97,14 +99,14 @@ typedef union {
 
 typedef struct
 {
-    gpio_pins_t dir;
-    gpio_pins_t state;
-    gpio_pins_t irq_mask;
-    gpio_pins_t irq_state;
-    gpio_pins_t rising;
-    gpio_pins_t falling;
-    gpio_pins_t pullup;
-    gpio_pins_t pulldown;
+    volatile gpio_pins_t dir;
+    volatile gpio_pins_t state;
+    volatile gpio_pins_t irq_mask;
+    volatile gpio_pins_t irq_state;
+    volatile gpio_pins_t rising;
+    volatile gpio_pins_t falling;
+    volatile gpio_pins_t pullup;
+    volatile gpio_pins_t pulldown;
 } gpio_port_t;
 
 extern mcu_uart_t uart;
