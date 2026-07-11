@@ -28,6 +28,7 @@
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #ifdef WIN32
 #include <winsock2.h>
@@ -124,45 +125,57 @@ uint8_t sim_socket_in()
     struct timeval tv = {
         .tv_sec = 0,
         .tv_usec = 0
-    }; 
+    };
 
-    fd_set cfds = rfds;
+    // Use select() ONLY to detect a new incoming connection on the listening
+    // socket. Data on the accepted connection is read with a single
+    // non-blocking read() below (the accepted socket is put in O_NONBLOCK once
+    // right after accept), instead of select()ing on it every poll.
+    fd_set cfds;
+    FD_ZERO(&cfds);
+    FD_SET(socket_fd, &cfds);
 
-    if((retval = select((socket_fd > sim.socket_fd ? socket_fd : sim.socket_fd) + 1, &cfds, NULL, NULL, &tv)) > 0) {
+    int accepted = 0;
 
-        if(FD_ISSET(socket_fd, &cfds)) {
+    if((retval = select(socket_fd + 1, &cfds, NULL, NULL, &tv)) > 0 && FD_ISSET(socket_fd, &cfds)) {
 
-            socklen_t addrlen = sizeof(struct sockaddr_in);
-            struct sockaddr_in client_addr;
+        socklen_t addrlen = sizeof(struct sockaddr_in);
+        struct sockaddr_in client_addr;
 
-            sim.socket_fd = accept(socket_fd, (struct sockaddr *) &client_addr, &addrlen);
-            if (sim.socket_fd < 0) {
-                printf("Fatal: Error on socket accept.\n");
-                exit(-5);
-            }
-
-            FD_SET(sim.socket_fd, &rfds);
-
-            struct timeval t = {
-                .tv_sec = 0,
-                .tv_usec = 0
-            }; 
-
-            setsockopt(sim.socket_fd, SOL_SOCKET, SO_RCVTIMEO, &t, sizeof(t));
+        sim.socket_fd = accept(socket_fd, (struct sockaddr *) &client_addr, &addrlen);
+        if (sim.socket_fd < 0) {
+            printf("Fatal: Error on socket accept.\n");
+            exit(-5);
         }
 
-        if(FD_ISSET(sim.socket_fd, &cfds)) {
+        FD_SET(sim.socket_fd, &rfds);
 
-            retval = read(sim.socket_fd, &c, 1);
+        // Put the accepted socket into non-blocking mode once so subsequent
+        // reads return immediately when there is no data.
+        int flags = fcntl(sim.socket_fd, F_GETFL, 0);
+        if (flags != -1)
+            fcntl(sim.socket_fd, F_SETFL, flags | O_NONBLOCK);
 
-            if(retval == 0) {
-                close(sim.socket_fd);
-                FD_CLR(sim.socket_fd, &rfds);
-                sim.socket_fd = 0;
-            }
+        accepted = 1;
+    }
+
+    // Read incoming data from the accepted connection. Skip on the poll where
+    // we just accepted (a brand-new connection has no data yet), matching the
+    // old select()-gated behavior.
+    if(!accepted && sim.socket_fd > 0) {
+
+        retval = read(sim.socket_fd, &c, 1);
+
+        if(retval == 0) {
+            close(sim.socket_fd);
+            FD_CLR(sim.socket_fd, &rfds);
+            sim.socket_fd = 0;
+            c = 0;
+        } else if(retval < 0) {
+            c = 0;   // EAGAIN/EWOULDBLOCK: no data available
+        }
 //            if(c && c != '?' && c >= ' ')
 //                sim_serial_out(c == '\r' ? '\n' : c);
-        }
     }
 
     return c;
